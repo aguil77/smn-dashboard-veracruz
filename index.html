@@ -116,16 +116,10 @@
         <div id="forecastContainer" class="forecast-list"></div>
       </div>
       <div id="grafica" class="section">
-        <div class="chart-placeholder">
-          📊 Gráfica de temperatura y precipitación
-          <small>Los datos del SMN son puntuales (no series temporales).<br>Para gráficas históricas se requiere API premium.</small>
-        </div>
+        <div class="chart-placeholder">  Gráfica de temperatura y precipitación<br><small>Datos puntuales. Para series temporales se requiere API premium.</small></div>
       </div>
       <div id="detalles" class="section">
-        <div class="chart-placeholder">
-          📋 Variables adicionales
-          <small>Presión atmosférica, radiación solar, punto de rocío, etc.<br>Disponibles en la API completa del SMN.</small>
-        </div>
+        <div class="chart-placeholder">  Variables adicionales<br><small>Presión, radiación, punto de rocío, etc.</small></div>
       </div>
     </div>
 
@@ -136,40 +130,35 @@
   </div>
 
   <script>
-    // ⚠️ PEGA AQUÍ TU URL DE VERCEL (ej: https://smn-proxy.vercel.app/api/proxy)
+    // ⚠️ PEGA AQUÍ TU URL REAL DE VERCEL
     const PROXY_URL = 'https://smn-proxy.vercel.app/api/proxy';
-
-    // Endpoint único del SMN que devuelve TODOS los municipios
     const SMN_ENDPOINT = 'https://smn.conagua.gob.mx/tools/GUI/webservices/index.php?method=1';
 
-    // Mapeo de municipios a sus IDs oficiales del SMN (idmun)
-    // Fuente: Catálogo CONAGUA / Web Service SMN
+    // Mapeo con IDs INEGI estándar (5 dígitos: 30 = Veracruz)
     const MUNICIPIOS = {
-      veracruz: { id: '195', nombre: 'Veracruz', estado: 'Veracruz' },
-      xalapa: { id: '087', nombre: 'Xalapa', estado: 'Veracruz' },
-      coatzacoalcos: { id: '035', nombre: 'Coatzacoalcos', estado: 'Veracruz' },
-      minatitlan: { id: '103', nombre: 'Minatitlán', estado: 'Veracruz' },
-      tuxpan: { id: '193', nombre: 'Tuxpan', estado: 'Veracruz' },
-      cordoba: { id: '042', nombre: 'Córdoba', estado: 'Veracruz' },
-      orizaba: { id: '117', nombre: 'Orizaba', estado: 'Veracruz' },
-      pozarica: { id: '126', nombre: 'Poza Rica', estado: 'Veracruz' },
-      santuxtla: { id: '152', nombre: 'San Andrés Tuxtla', estado: 'Veracruz' },
-      bocario: { id: '028', nombre: 'Boca del Río', estado: 'Veracruz' }
+      veracruz: { id: '30195', nombre: 'Veracruz' },
+      xalapa: { id: '30087', nombre: 'Xalapa' },
+      coatzacoalcos: { id: '30035', nombre: 'Coatzacoalcos' },
+      minatitlan: { id: '30103', nombre: 'Minatitlán' },
+      tuxpan: { id: '30193', nombre: 'Tuxpan' },
+      cordoba: { id: '30042', nombre: 'Córdoba' },
+      orizaba: { id: '30117', nombre: 'Orizaba' },
+      pozarica: { id: '30126', nombre: 'Poza Rica' },
+      santuxtla: { id: '30152', nombre: 'San Andrés Tuxtla' },
+      bocario: { id: '30028', nombre: 'Boca del Río' }
     };
 
-    // Iconos según condición del cielo
     const getWeatherIcon = (desciel) => {
       const c = (desciel || '').toLowerCase();
-      if (c.includes('despejado') || c.includes('claro')) return '☀️';
+      if (c.includes('despejado') || c.includes('claro')) return '️';
       if (c.includes('parcialmente')) return '⛅';
       if (c.includes('nublado') || c.includes('cubierto')) return '☁️';
       if (c.includes('lluvia') || c.includes('llovizna')) return '🌧️';
-      if (c.includes('tormenta') || c.includes('thunder')) return '⛈️';
-      if (c.includes('niebla') || c.includes('fog')) return '🌫️';
+      if (c.includes('tormenta')) return '⛈️';
+      if (c.includes('niebla')) return '🌫️';
       return '🌡️';
     };
 
-    // Referencias al DOM
     const els = {
       municipio: document.getElementById('municipioSelect'),
       vista: document.getElementById('vistaSelect'),
@@ -191,16 +180,8 @@
 
     let controller = null;
 
-    // Helpers de UI
-    function showLoading() { 
-      els.loading.classList.remove('hidden'); 
-      els.dashboard.classList.add('hidden'); 
-      els.btn.disabled = true; 
-    }
-    function hideLoading() { 
-      els.loading.classList.add('hidden'); 
-      els.btn.disabled = false; 
-    }
+    function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); els.btn.disabled = true; }
+    function hideLoading() { els.loading.classList.add('hidden'); els.btn.disabled = false; }
     function showError(msg) {
       els.error.textContent = msg;
       els.error.classList.remove('hidden');
@@ -208,15 +189,11 @@
       hideLoading();
     }
 
-    // Función principal de carga de datos
     async function fetchData(city, view) {
-      const municipio = MUNICIPIOS[city];
-      if (!municipio) return showError(`Municipio "${city}" no configurado en MUNICIPIOS`);
+      const mun = MUNICIPIOS[city];
+      if (!mun) return showError(`Municipio "${city}" no configurado`);
       
-      // Construir URL del proxy con el endpoint del SMN
       const proxy = `${PROXY_URL}?url=${encodeURIComponent(SMN_ENDPOINT)}`;
-      
-      // Cancelar petición anterior si existe
       controller?.abort();
       controller = new AbortController();
       
@@ -225,67 +202,64 @@
 
       try {
         const res = await fetch(proxy, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
-        let data = await res.json();
+        const raw = await res.json();
+        const records = Array.isArray(raw) ? raw : [];
         
-        // Normalizar: el SMN puede devolver un objeto o un array
-        const municipios = Array.isArray(data) ? data : (data.municipios || [data]);
-        
-        // Filtrar el municipio seleccionado por idmun (comparación como string)
-        const municipioData = municipios.find(m => String(m.idmun) === String(municipio.id));
-        
-        if (!municipioData) {
-          throw new Error(`No se encontraron datos para ${municipio.nombre} (idmun: ${municipio.id})`);
+        console.log('📦 Registros totales del SMN:', records.length);
+
+        // Filtrado robusto: por ID exacto, por sufijo de 3 dígitos, o por nombre
+        let matched = records.filter(r => {
+          const idStr = String(r.idmun || '');
+          return idStr === mun.id || idStr.endsWith(mun.id.slice(-3));
+        });
+
+        // Fallback por nombre si falla el ID
+        if (matched.length === 0) {
+          matched = records.filter(r => r.nmun?.toLowerCase().includes(mun.nombre.toLowerCase()));
         }
-        
-        render(municipioData, view);
+
+        if (matched.length === 0) {
+          throw new Error(`No se encontraron datos para ${mun.nombre}. IDs disponibles: ${records.slice(0,5).map(r=>r.idmun).join(', ')}...`);
+        }
+
+        // Tomamos el primer registro (última actualización)
+        const data = matched[0];
+        console.log('✅ Datos filtrados:', data);
+
+        render(data, view);
         els.dashboard.classList.remove('hidden');
-        
-        // Cache en localStorage (15 minutos = 900000 ms)
-        localStorage.setItem(`smn_${city}`, JSON.stringify({ data: municipioData, ts: Date.now() }));
-        
+        localStorage.setItem(`smn_${city}`, JSON.stringify({ data, ts: Date.now() }));
       } catch (err) {
         if (err.name === 'AbortError') return;
         
-        // Fallback a caché local si existe y es reciente
         const cached = localStorage.getItem(`smn_${city}`);
-        if (cached) {
-          try {
-            const { data, ts } = JSON.parse(cached);
-            if (Date.now() - ts < 900000) { // 15 min
-              render(data, view);
-              els.dashboard.classList.remove('hidden');
-              els.error.textContent = `⚠️ Datos en caché (servicio temporalmente no disponible)`;
-              els.error.classList.remove('hidden');
-              return;
-            }
-          } catch {}
+        if (cached && Date.now() - JSON.parse(cached).ts < 900000) {
+          render(JSON.parse(cached).data, view);
+          els.dashboard.classList.remove('hidden');
+          els.error.textContent = `⚠️ Datos en caché (servicio no disponible)`;
+          els.error.classList.remove('hidden');
+          return;
         }
-        
-        showError(`Error al cargar datos: ${err.message}`);
+        showError(`Error: ${err.message}`);
       } finally {
         hideLoading();
       }
     }
 
-    // Renderizado de datos en el DOM
     function render(d, view) {
-      // Mapeo de campos del JSON del SMN a tu dashboard
-      // Campos reales: tmax, tmin, probprec, velvien, dirvienc, cc, desciel
-      els.valMax.textContent = d.tmax ? `${parseFloat(d.tmax).toFixed(1)}°C` : '--°C';
-      els.valMin.textContent = d.tmin ? `${parseFloat(d.tmin).toFixed(1)}°C` : '--°C';
-      els.valRain.textContent = d.probprec ? `${parseFloat(d.probprec).toFixed(0)}%` : '--%';
-      els.valWind.textContent = d.velvien ? `${parseFloat(d.velvien).toFixed(1)} km/h` : '-- km/h';
+      // Mapeo exacto según tu nomenclatura
+      els.valMax.textContent = d.tmax != null ? `${d.tmax}°C` : '--°C';
+      els.valMin.textContent = d.tmin != null ? `${d.tmin}°C` : '--°C';
+      els.valRain.textContent = d.probprec != null ? `${d.probprec}%` : '--%';
+      els.valWind.textContent = d.velvien != null ? `${d.velvien} km/h` : '-- km/h';
       els.valWindDir.textContent = d.dirvienc || '';
-      els.valHum.textContent = d.cc ? `${parseFloat(d.cc).toFixed(0)}%` : '--%'; // cc = cobertura de nubes
+      els.valHum.textContent = d.cc != null ? `${d.cc}%` : '--%';
       els.valCond.textContent = d.desciel || '--';
 
-      // Renderizar pronóstico (3 días simulados con los mismos datos)
-      // Nota: El endpoint ?method=1 devuelve datos puntuales, no serie temporal
       const forecastContainer = document.getElementById('forecastContainer');
       forecastContainer.innerHTML = '';
-      
       const dias = ['Hoy', 'Mañana', 'Mié'];
       const icon = getWeatherIcon(d.desciel);
       
@@ -295,15 +269,14 @@
         el.innerHTML = `
           <div class="day">${dias[i]}</div>
           <div class="icon">${icon}</div>
-          <div class="temps">${d.tmax ? parseFloat(d.tmax).toFixed(0) : '--'}° / ${d.tmin ? parseFloat(d.tmin).toFixed(0) : '--'}°</div>
-          <div class="rain">${d.probprec ? parseFloat(d.probprec).toFixed(0) : '--'}% lluvia</div>
-          <div class="wind">${d.velvien ? parseFloat(d.velvien).toFixed(0) : '--'} km/h ${d.dirvienc || ''}</div>
+          <div class="temps">${d.tmax ?? '--'}° / ${d.tmin ?? '--'}°</div>
+          <div class="rain">${d.probprec ?? '--'}% lluvia</div>
+          <div class="wind">${d.velvien ?? '--'} km/h ${d.dirvienc || ''}</div>
         `;
         forecastContainer.appendChild(el);
       }
     }
 
-    // Manejo de tabs
     els.tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         els.tabs.forEach(t => t.classList.remove('active'));
@@ -313,14 +286,11 @@
       });
     });
 
-    // Event listeners
     els.btn.addEventListener('click', () => fetchData(els.municipio.value, els.vista.value));
     els.municipio.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     els.vista.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     
-    // Carga inicial
     window.addEventListener('DOMContentLoaded', () => {
-      // Habilitar botón cuando el DOM esté listo
       els.btn.disabled = false;
       fetchData(els.municipio.value, els.vista.value);
     });
