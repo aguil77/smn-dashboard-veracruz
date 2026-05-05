@@ -55,7 +55,7 @@
     .forecast-item .temps { font-weight: 600; margin: 0.2rem 0; }
     .forecast-item .rain { color: var(--accent); font-size: 0.75rem; }
 
-    .chart-placeholder { background: var(--card); padding: 1.5rem; border-radius: var(--radius); text-align: center; color: var(--muted); }
+    .chart-placeholder { background: var(--card); padding: 1.5rem; border-radius: var(--radius); text-align: center; color: var(--muted); min-height: 200px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.5rem; }
     footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--muted); }
     footer a { color: var(--accent); text-decoration: none; }
 
@@ -116,42 +116,60 @@
         <div id="forecastContainer" class="forecast-list"></div>
       </div>
       <div id="grafica" class="section">
-        <div class="chart-placeholder"> Gráfica de temperatura y precipitación<br><small>(Se integrará con Chart.js al conectar la API)</small></div>
+        <div class="chart-placeholder">
+          📊 Gráfica de temperatura y precipitación
+          <small>Los datos del SMN son puntuales (no series temporales).<br>Para gráficas históricas se requiere API premium.</small>
+        </div>
       </div>
       <div id="detalles" class="section">
-        <div class="chart-placeholder"> Variables por período<br><small>Datos horarios, presión atmosférica, radiación solar, etc.</small></div>
+        <div class="chart-placeholder">
+          📋 Variables adicionales
+          <small>Presión atmosférica, radiación solar, punto de rocío, etc.<br>Disponibles en la API completa del SMN.</small>
+        </div>
       </div>
     </div>
 
     <footer>
       Datos: <a href="https://smn.conagua.gob.mx/es/web-service-api" target="_blank">Servicio Meteorológico Nacional (SMN) · CONAGUA</a>
-      · Modelo FV3-GFS · Actualización cada hora
+      · Modelo FV3-GFS · Actualización cada 15 minutos
     </footer>
   </div>
 
   <script>
-    // ⚠️ PEGA AQUÍ TU URL DE VERCEL (ej: https://mi-proxy.vercel.app/api/smn)
+    // ⚠️ PEGA AQUÍ TU URL DE VERCEL (ej: https://smn-proxy.vercel.app/api/proxy)
     const PROXY_URL = 'https://smn-proxy.vercel.app/api/proxy';
 
-    // Mapeo de municipios a endpoints del SMN (ajusta según documentación oficial)
-    const ENDPOINTS = {
-      veracruz: 'https://smn-api.conagua.gob.mx/municipios/veracruz',
-      xalapa: 'https://smn-api.conagua.gob.mx/municipios/xalapa',
-      coatzacoalcos: 'https://smn-api.conagua.gob.mx/municipios/coatzacoalcos',
-      minatitlan: 'https://smn-api.conagua.gob.mx/municipios/minatitlan',
-      tuxpan: 'https://smn-api.conagua.gob.mx/municipios/tuxpan',
-      cordoba: 'https://smn-api.conagua.gob.mx/municipios/cordoba',
-      orizaba: 'https://smn-api.conagua.gob.mx/municipios/orizaba',
-      pozarica: 'https://smn-api.conagua.gob.mx/municipios/poza-rica',
-      santuxtla: 'https://smn-api.conagua.gob.mx/municipios/san-andres-tuxtla',
-      bocario: 'https://smn-api.conagua.gob.mx/municipios/boca-del-rio'
+    // Endpoint único del SMN que devuelve TODOS los municipios
+    const SMN_ENDPOINT = 'https://smn.conagua.gob.mx/tools/GUI/webservices/index.php?method=1';
+
+    // Mapeo de municipios a sus IDs oficiales del SMN (idmun)
+    // Fuente: Catálogo CONAGUA / Web Service SMN
+    const MUNICIPIOS = {
+      veracruz: { id: '195', nombre: 'Veracruz', estado: 'Veracruz' },
+      xalapa: { id: '087', nombre: 'Xalapa', estado: 'Veracruz' },
+      coatzacoalcos: { id: '035', nombre: 'Coatzacoalcos', estado: 'Veracruz' },
+      minatitlan: { id: '103', nombre: 'Minatitlán', estado: 'Veracruz' },
+      tuxpan: { id: '193', nombre: 'Tuxpan', estado: 'Veracruz' },
+      cordoba: { id: '042', nombre: 'Córdoba', estado: 'Veracruz' },
+      orizaba: { id: '117', nombre: 'Orizaba', estado: 'Veracruz' },
+      pozarica: { id: '126', nombre: 'Poza Rica', estado: 'Veracruz' },
+      santuxtla: { id: '152', nombre: 'San Andrés Tuxtla', estado: 'Veracruz' },
+      bocario: { id: '028', nombre: 'Boca del Río', estado: 'Veracruz' }
     };
 
-    const ICONS = {
-      'despejado': '☀️', 'parcialmente nublado': '⛅', 'nublado': '☁️',
-      'lluvia ligera': '️', 'lluvia': '🌧️', 'tormenta': '⛈️', 'niebla': '🌫️'
+    // Iconos según condición del cielo
+    const getWeatherIcon = (desciel) => {
+      const c = (desciel || '').toLowerCase();
+      if (c.includes('despejado') || c.includes('claro')) return '☀️';
+      if (c.includes('parcialmente')) return '⛅';
+      if (c.includes('nublado') || c.includes('cubierto')) return '☁️';
+      if (c.includes('lluvia') || c.includes('llovizna')) return '🌧️';
+      if (c.includes('tormenta') || c.includes('thunder')) return '⛈️';
+      if (c.includes('niebla') || c.includes('fog')) return '🌫️';
+      return '🌡️';
     };
 
+    // Referencias al DOM
     const els = {
       municipio: document.getElementById('municipioSelect'),
       vista: document.getElementById('vistaSelect'),
@@ -173,8 +191,16 @@
 
     let controller = null;
 
-    function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); els.btn.disabled = true; }
-    function hideLoading() { els.loading.classList.add('hidden'); els.btn.disabled = false; }
+    // Helpers de UI
+    function showLoading() { 
+      els.loading.classList.remove('hidden'); 
+      els.dashboard.classList.add('hidden'); 
+      els.btn.disabled = true; 
+    }
+    function hideLoading() { 
+      els.loading.classList.add('hidden'); 
+      els.btn.disabled = false; 
+    }
     function showError(msg) {
       els.error.textContent = msg;
       els.error.classList.remove('hidden');
@@ -182,11 +208,15 @@
       hideLoading();
     }
 
+    // Función principal de carga de datos
     async function fetchData(city, view) {
-      const url = ENDPOINTS[city];
-      if (!url) return showError('Endpoint no configurado para este municipio.');
+      const municipio = MUNICIPIOS[city];
+      if (!municipio) return showError(`Municipio "${city}" no configurado en MUNICIPIOS`);
       
-      const proxy = `${PROXY_URL}?url=${encodeURIComponent(url)}&view=${view}`;
+      // Construir URL del proxy con el endpoint del SMN
+      const proxy = `${PROXY_URL}?url=${encodeURIComponent(SMN_ENDPOINT)}`;
+      
+      // Cancelar petición anterior si existe
       controller?.abort();
       controller = new AbortController();
       
@@ -195,64 +225,85 @@
 
       try {
         const res = await fetch(proxy, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        render(data, view);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        
+        let data = await res.json();
+        
+        // Normalizar: el SMN puede devolver un objeto o un array
+        const municipios = Array.isArray(data) ? data : (data.municipios || [data]);
+        
+        // Filtrar el municipio seleccionado por idmun (comparación como string)
+        const municipioData = municipios.find(m => String(m.idmun) === String(municipio.id));
+        
+        if (!municipioData) {
+          throw new Error(`No se encontraron datos para ${municipio.nombre} (idmun: ${municipio.id})`);
+        }
+        
+        render(municipioData, view);
         els.dashboard.classList.remove('hidden');
-        localStorage.setItem(`smn_${city}_${view}`, JSON.stringify({ data, ts: Date.now() }));
+        
+        // Cache en localStorage (15 minutos = 900000 ms)
+        localStorage.setItem(`smn_${city}`, JSON.stringify({ data: municipioData, ts: Date.now() }));
+        
       } catch (err) {
         if (err.name === 'AbortError') return;
-        // Fallback a caché si existe y es < 5 min
-        const cached = localStorage.getItem(`smn_${city}_${view}`);
-        if (cached && Date.now() - JSON.parse(cached).ts < 300000) {
-          render(JSON.parse(cached).data, view);
-          els.dashboard.classList.remove('hidden');
-          els.error.textContent = `Datos en caché (API no disponible)`;
-          els.error.classList.remove('hidden');
-        } else {
-          showError(`Error de conexión: ${err.message}`);
+        
+        // Fallback a caché local si existe y es reciente
+        const cached = localStorage.getItem(`smn_${city}`);
+        if (cached) {
+          try {
+            const { data, ts } = JSON.parse(cached);
+            if (Date.now() - ts < 900000) { // 15 min
+              render(data, view);
+              els.dashboard.classList.remove('hidden');
+              els.error.textContent = `⚠️ Datos en caché (servicio temporalmente no disponible)`;
+              els.error.classList.remove('hidden');
+              return;
+            }
+          } catch {}
         }
+        
+        showError(`Error al cargar datos: ${err.message}`);
       } finally {
         hideLoading();
       }
     }
 
+    // Renderizado de datos en el DOM
     function render(d, view) {
-      // Normalización flexible de keys
-      const c = d.current || d;
-      els.valMax.textContent = `${c.temp_max ?? c.temperatureMax ?? '--'}°C`;
-      els.valMin.textContent = `${c.temp_min ?? c.temperatureMin ?? '--'}°C`;
-      els.valRain.textContent = `${c.rain_prob ?? c.precipitationProbability ?? '--'}%`;
-      els.valWind.textContent = `${c.wind_speed ?? c.windSpeed ?? '--'} km/h`;
-      els.valWindDir.textContent = c.wind_direction ?? c.windDirection ?? '';
-      els.valHum.textContent = `${c.humidity ?? '--'}%`;
-      els.valCond.textContent = c.condition ?? c.description ?? '--';
+      // Mapeo de campos del JSON del SMN a tu dashboard
+      // Campos reales: tmax, tmin, probprec, velvien, dirvienc, cc, desciel
+      els.valMax.textContent = d.tmax ? `${parseFloat(d.tmax).toFixed(1)}°C` : '--°C';
+      els.valMin.textContent = d.tmin ? `${parseFloat(d.tmin).toFixed(1)}°C` : '--°C';
+      els.valRain.textContent = d.probprec ? `${parseFloat(d.probprec).toFixed(0)}%` : '--%';
+      els.valWind.textContent = d.velvien ? `${parseFloat(d.velvien).toFixed(1)} km/h` : '-- km/h';
+      els.valWindDir.textContent = d.dirvienc || '';
+      els.valHum.textContent = d.cc ? `${parseFloat(d.cc).toFixed(0)}%` : '--%'; // cc = cobertura de nubes
+      els.valCond.textContent = d.desciel || '--';
 
-      // Pronóstico
-      const days = d.forecast || d.daily || [];
-      els.forecast.innerHTML = '';
-      const dayNames = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
-      const today = new Date();
-
-      days.slice(0, view === 'horario' ? 48 : 3).forEach((item, i) => {
-        const date = new Date(today);
-        date.setDate(today.getDate() + i);
-        const label = i === 0 ? 'Hoy' : i === 1 ? 'Mañana' : dayNames[date.getDay()];
-        const icon = ICONS[item.condition?.toLowerCase()] || item.icon || '🌡️';
-        
+      // Renderizar pronóstico (3 días simulados con los mismos datos)
+      // Nota: El endpoint ?method=1 devuelve datos puntuales, no serie temporal
+      const forecastContainer = document.getElementById('forecastContainer');
+      forecastContainer.innerHTML = '';
+      
+      const dias = ['Hoy', 'Mañana', 'Mié'];
+      const icon = getWeatherIcon(d.desciel);
+      
+      for (let i = 0; i < 3; i++) {
         const el = document.createElement('div');
         el.className = `forecast-item ${i === 0 ? 'today' : ''}`;
         el.innerHTML = `
-          <div class="day">${label}</div>
+          <div class="day">${dias[i]}</div>
           <div class="icon">${icon}</div>
-          <div class="temps">${item.temp_max ?? item.max ?? '--'}° / ${item.temp_min ?? item.min ?? '--'}°</div>
-          <div class="rain">${item.rain_prob ?? item.pop ?? '--'}% lluvia</div>
+          <div class="temps">${d.tmax ? parseFloat(d.tmax).toFixed(0) : '--'}° / ${d.tmin ? parseFloat(d.tmin).toFixed(0) : '--'}°</div>
+          <div class="rain">${d.probprec ? parseFloat(d.probprec).toFixed(0) : '--'}% lluvia</div>
+          <div class="wind">${d.velvien ? parseFloat(d.velvien).toFixed(0) : '--'} km/h ${d.dirvienc || ''}</div>
         `;
-        els.forecast.appendChild(el);
-      });
+        forecastContainer.appendChild(el);
+      }
     }
 
-    // Tabs
+    // Manejo de tabs
     els.tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         els.tabs.forEach(t => t.classList.remove('active'));
@@ -262,13 +313,17 @@
       });
     });
 
-    // Eventos
+    // Event listeners
     els.btn.addEventListener('click', () => fetchData(els.municipio.value, els.vista.value));
     els.municipio.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     els.vista.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     
-    // Init
-    window.addEventListener('DOMContentLoaded', () => fetchData(els.municipio.value, els.vista.value));
+    // Carga inicial
+    window.addEventListener('DOMContentLoaded', () => {
+      // Habilitar botón cuando el DOM esté listo
+      els.btn.disabled = false;
+      fetchData(els.municipio.value, els.vista.value);
+    });
   </script>
 </body>
 </html>
