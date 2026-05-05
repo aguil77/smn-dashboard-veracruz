@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard Meteorológico SMN · Veracruz</title>
+  <!-- Chart.js v4 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
       --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
@@ -46,28 +48,24 @@
     .error { background: #451a1a; color: var(--danger); display: none; }
     .hidden { display: none !important; }
 
-    .forecast-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
-    .forecast-item { background: var(--card); padding: 0.8rem; border-radius: var(--radius); text-align: center; }
-    .forecast-item.today { background: #1e40af; border: 1px solid var(--accent); }
-    .forecast-item .day { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
-    .forecast-item.today .day { color: #93c5fd; }
-    .forecast-item .icon { font-size: 1.5rem; margin: 0.3rem 0; }
-    .forecast-item .temps { font-weight: 600; margin: 0.2rem 0; }
-    .forecast-item .rain { color: var(--accent); font-size: 0.75rem; }
+    .chart-container { background: var(--card); padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 0.6rem; text-align: left; border-bottom: 1px solid #334155; }
+    th { color: var(--muted); text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px; }
+    tr:hover { background: rgba(255,255,255,0.03); }
 
-    .chart-placeholder { background: var(--card); padding: 1.5rem; border-radius: var(--radius); text-align: center; color: var(--muted); min-height: 200px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.5rem; }
     footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--muted); }
     footer a { color: var(--accent); text-decoration: none; }
 
     @keyframes pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
-    @media (max-width: 600px) { .grid { grid-template-columns: repeat(2, 1fr); } .forecast-list { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .grid { grid-template-columns: repeat(2, 1fr); } }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div>
-        <h1>🌤️ Dashboard Meteorológico · Veracruz</h1>
+        <h1>️ Dashboard Meteorológico · Veracruz</h1>
         <p>Servicio Meteorológico Nacional / CONAGUA</p>
       </div>
       <span class="badge">SMN · CONAGUA</span>
@@ -113,28 +111,46 @@
       </div>
 
       <div id="pronostico" class="section active">
-        <div id="forecastContainer" class="forecast-list"></div>
+        <div id="forecastContainer" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:0.75rem;"></div>
       </div>
+      
       <div id="grafica" class="section">
-        <div class="chart-placeholder">  Gráfica de temperatura y precipitación<br><small>Datos puntuales. Para series temporales se requiere API premium.</small></div>
+        <div class="chart-container">
+          <canvas id="weatherChart"></canvas>
+        </div>
       </div>
+      
       <div id="detalles" class="section">
-        <div class="chart-placeholder">  Variables adicionales<br><small>Presión, radiación, punto de rocío, etc.</small></div>
+        <div class="card" style="overflow-x:auto;">
+          <table id="detailsTable">
+            <thead>
+              <tr>
+                <th>Período</th>
+                <th>T. Máx</th>
+                <th>T. Mín</th>
+                <th>Lluvia %</th>
+                <th>Viento</th>
+                <th>Dirección</th>
+                <th>Condición</th>
+              </tr>
+            </thead>
+            <tbody id="detailsBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <footer>
       Datos: <a href="https://smn.conagua.gob.mx/es/web-service-api" target="_blank">Servicio Meteorológico Nacional (SMN) · CONAGUA</a>
-      · Modelo FV3-GFS · Actualización cada 15 minutos
+      · Modelo FV3-GFS · Actualización cada hora
     </footer>
   </div>
 
   <script>
-    // ⚠️ PEGA AQUÍ TU URL REAL DE VERCEL
+    // ⚠️ ACTUALIZA CON TU URL REAL DE VERCEL
     const PROXY_URL = 'https://smn-proxy.vercel.app/api/proxy';
     const SMN_ENDPOINT = 'https://smn.conagua.gob.mx/tools/GUI/webservices/index.php?method=1';
 
-    // Mapeo con IDs INEGI estándar (5 dígitos: 30 = Veracruz)
     const MUNICIPIOS = {
       veracruz: { id: '30195', nombre: 'Veracruz' },
       xalapa: { id: '30087', nombre: 'Xalapa' },
@@ -148,13 +164,13 @@
       bocario: { id: '30028', nombre: 'Boca del Río' }
     };
 
-    const getWeatherIcon = (desciel) => {
-      const c = (desciel || '').toLowerCase();
-      if (c.includes('despejado') || c.includes('claro')) return '️';
-      if (c.includes('parcialmente')) return '⛅';
-      if (c.includes('nublado') || c.includes('cubierto')) return '☁️';
-      if (c.includes('lluvia') || c.includes('llovizna')) return '🌧️';
-      if (c.includes('tormenta')) return '⛈️';
+    const getWeatherIcon = (desc) => {
+      const c = (desc || '').toLowerCase();
+      if (c.includes('despejado') || c.includes('claro')) return '☀️';
+      if (c.includes('parcialmente')) return '';
+      if (c.includes('nublado') || c.includes('cubierto')) return '️';
+      if (c.includes('lluvia')) return '🌧️';
+      if (c.includes('tormenta')) return '️';
       if (c.includes('niebla')) return '🌫️';
       return '🌡️';
     };
@@ -174,10 +190,12 @@
       valHum: document.getElementById('valHum'),
       valCond: document.getElementById('valCond'),
       forecast: document.getElementById('forecastContainer'),
+      detailsBody: document.getElementById('detailsBody'),
       tabs: document.querySelectorAll('.tab'),
       sections: document.querySelectorAll('.section')
     };
 
+    let chartInstance = null;
     let controller = null;
 
     function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); els.btn.disabled = true; }
@@ -191,9 +209,13 @@
 
     async function fetchData(city, view) {
       const mun = MUNICIPIOS[city];
-      if (!mun) return showError(`Municipio "${city}" no configurado`);
-      
-      const proxy = `${PROXY_URL}?url=${encodeURIComponent(SMN_ENDPOINT)}`;
+      if (!mun) return showError('Municipio no configurado');
+
+      // Si el usuario pide horario, intentamos method=2 (forecast), si no method=1
+      const methodParam = view === 'horario' ? 'method=2' : 'method=1';
+      const targetUrl = `${SMN_ENDPOINT.split('?')[0]}?${methodParam}`;
+      const proxy = `${PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
+
       controller?.abort();
       controller = new AbortController();
       
@@ -207,36 +229,40 @@
         const raw = await res.json();
         const records = Array.isArray(raw) ? raw : [];
         
-        console.log('📦 Registros totales del SMN:', records.length);
+        // Filtrar por municipio
+        let matched = records.filter(r => 
+          String(r.idmun) === mun.id || 
+          String(r.idmun).endsWith(mun.id.slice(-3)) ||
+          r.nmun?.toLowerCase().includes(mun.nombre.toLowerCase())
+        );
 
-        // Filtrado robusto: por ID exacto, por sufijo de 3 dígitos, o por nombre
-        let matched = records.filter(r => {
-          const idStr = String(r.idmun || '');
-          return idStr === mun.id || idStr.endsWith(mun.id.slice(-3));
-        });
+        if (matched.length === 0) throw new Error(`No se encontraron datos para ${mun.nombre}`);
 
-        // Fallback por nombre si falla el ID
-        if (matched.length === 0) {
-          matched = records.filter(r => r.nmun?.toLowerCase().includes(mun.nombre.toLowerCase()));
-        }
+        // Ordenar por fecha/hora si existe dloc
+        matched.sort((a, b) => (a.dloc || '').localeCompare(b.dloc || ''));
 
-        if (matched.length === 0) {
-          throw new Error(`No se encontraron datos para ${mun.nombre}. IDs disponibles: ${records.slice(0,5).map(r=>r.idmun).join(', ')}...`);
-        }
+        // Limitar según vista
+        const limit = view === 'horario' ? 48 : 3;
+        const data = matched.slice(0, limit);
 
-        // Tomamos el primer registro (última actualización)
-        const data = matched[0];
-        console.log('✅ Datos filtrados:', data);
+        renderCards(data[0] || data);
+        renderForecast(data);
+        renderChart(data, view);
+        renderDetails(data, view);
 
-        render(data, view);
         els.dashboard.classList.remove('hidden');
-        localStorage.setItem(`smn_${city}`, JSON.stringify({ data, ts: Date.now() }));
+        localStorage.setItem(`smn_${city}_${view}`, JSON.stringify({ data, ts: Date.now() }));
       } catch (err) {
         if (err.name === 'AbortError') return;
         
-        const cached = localStorage.getItem(`smn_${city}`);
+        // Fallback caché
+        const cached = localStorage.getItem(`smn_${city}_${view}`);
         if (cached && Date.now() - JSON.parse(cached).ts < 900000) {
-          render(JSON.parse(cached).data, view);
+          const { data } = JSON.parse(cached);
+          renderCards(data[0] || data);
+          renderForecast(data);
+          renderChart(data, view);
+          renderDetails(data, view);
           els.dashboard.classList.remove('hidden');
           els.error.textContent = `⚠️ Datos en caché (servicio no disponible)`;
           els.error.classList.remove('hidden');
@@ -248,8 +274,7 @@
       }
     }
 
-    function render(d, view) {
-      // Mapeo exacto según tu nomenclatura
+    function renderCards(d) {
       els.valMax.textContent = d.tmax != null ? `${d.tmax}°C` : '--°C';
       els.valMin.textContent = d.tmin != null ? `${d.tmin}°C` : '--°C';
       els.valRain.textContent = d.probprec != null ? `${d.probprec}%` : '--%';
@@ -257,26 +282,99 @@
       els.valWindDir.textContent = d.dirvienc || '';
       els.valHum.textContent = d.cc != null ? `${d.cc}%` : '--%';
       els.valCond.textContent = d.desciel || '--';
-
-      const forecastContainer = document.getElementById('forecastContainer');
-      forecastContainer.innerHTML = '';
-      const dias = ['Hoy', 'Mañana', 'Mié'];
-      const icon = getWeatherIcon(d.desciel);
-      
-      for (let i = 0; i < 3; i++) {
-        const el = document.createElement('div');
-        el.className = `forecast-item ${i === 0 ? 'today' : ''}`;
-        el.innerHTML = `
-          <div class="day">${dias[i]}</div>
-          <div class="icon">${icon}</div>
-          <div class="temps">${d.tmax ?? '--'}° / ${d.tmin ?? '--'}°</div>
-          <div class="rain">${d.probprec ?? '--'}% lluvia</div>
-          <div class="wind">${d.velvien ?? '--'} km/h ${d.dirvienc || ''}</div>
-        `;
-        forecastContainer.appendChild(el);
-      }
     }
 
+    function renderForecast(data) {
+      els.forecast.innerHTML = '';
+      const dias = ['Hoy', 'Mañana', 'Pasado'];
+      data.slice(0, 3).forEach((d, i) => {
+        const el = document.createElement('div');
+        el.className = 'card';
+        el.style.textAlign = 'center';
+        el.innerHTML = `
+          <div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.3rem">${dias[i] || `Día ${i+1}`}</div>
+          <div style="font-size:1.8rem;margin:0.3rem 0">${getWeatherIcon(d.desciel)}</div>
+          <div style="font-weight:600">${d.tmax ?? '--'}° / ${d.tmin ?? '--'}°</div>
+          <div style="color:var(--accent);font-size:0.85rem;margin-top:0.2rem">${d.probprec ?? '--'}% lluvia</div>
+          <div style="color:var(--muted);font-size:0.75rem">${d.velvien ?? '--'} km/h ${d.dirvienc || ''}</div>
+        `;
+        els.forecast.appendChild(el);
+      });
+    }
+
+    function renderChart(data, view) {
+      const ctx = document.getElementById('weatherChart');
+      if (!ctx) return;
+      if (chartInstance) chartInstance.destroy();
+
+      const labels = data.map((d, i) => {
+        if (view === 'horario') return d.dloc?.slice(8, 10) + ':00' || `${i}:00`;
+        return ['Hoy', 'Mañana', 'Pasado'][i] || `Día ${i+1}`;
+      });
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Temp. máxima (°C)',
+              data: data.map(d => d.tmax),
+              borderColor: '#ef4444',
+              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+              tension: 0.3, fill: true
+            },
+            {
+              label: 'Temp. mínima (°C)',
+              data: data.map(d => d.tmin),
+              borderColor: '#38bdf8',
+              backgroundColor: 'rgba(56, 189, 248, 0.1)',
+              tension: 0.3, fill: true
+            },
+            {
+              label: 'Prob. lluvia (%)',
+              data: data.map(d => d.probprec),
+              borderColor: '#22c55e',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              tension: 0.3, yAxisID: 'y1', borderDash: [5, 5]
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y: { position: 'left', title: { display: true, text: 'Temperatura (°C)', color: '#94a3b8' }, grid: { color: '#334155' }, ticks: { color: '#cbd5e1' } },
+            y1: { position: 'right', title: { display: true, text: 'Lluvia (%)', color: '#94a3b8' }, grid: { drawOnChartArea: false }, min: 0, max: 100, ticks: { color: '#cbd5e1' } },
+            x: { grid: { color: '#334155' }, ticks: { color: '#cbd5e1' } }
+          },
+          plugins: {
+            legend: { labels: { color: '#e2e8f0' } },
+            tooltip: { backgroundColor: '#1e293b', titleColor: '#f1f5f9', bodyColor: '#cbd5e1', borderColor: '#334155', borderWidth: 1 }
+          }
+        }
+      });
+    }
+
+    function renderDetails(data, view) {
+      els.detailsBody.innerHTML = '';
+      data.forEach((d, i) => {
+        const period = view === 'horario' ? (d.dloc?.slice(8, 10) + ':00' || `${i}:00`) : `Día ${i + 1}`;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${period}</td>
+          <td>${d.tmax ?? '-'}°C</td>
+          <td>${d.tmin ?? '-'}°C</td>
+          <td>${d.probprec ?? '-'}%</td>
+          <td>${d.velvien ?? '-'} km/h</td>
+          <td>${d.dirvienc || '-'}</td>
+          <td>${d.desciel || '-'}</td>
+        `;
+        els.detailsBody.appendChild(row);
+      });
+    }
+
+    // Tabs
     els.tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         els.tabs.forEach(t => t.classList.remove('active'));
@@ -286,6 +384,7 @@
       });
     });
 
+    // Eventos
     els.btn.addEventListener('click', () => fetchData(els.municipio.value, els.vista.value));
     els.municipio.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     els.vista.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
