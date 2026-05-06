@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- ✅ CSP CORREGIDO: 'unsafe-eval' añadido para compatibilidad con Chart.js -->
   <title>Dashboard Meteorológico SMN · Veracruz</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
@@ -135,11 +134,11 @@
       sections: document.querySelectorAll('.section')
     };
 
+    // ✅ Botón habilitado inmediatamente al cargar (evita bloqueo por JS/CSP)
+    els.btn.disabled = false;
+
     let chartInstance = null;
     let controller = null;
-
-    // ✅ Habilitar botón INMEDIATAMENTE al cargar (evita bloqueo por CSP/JS)
-    els.btn.disabled = false;
 
     function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); els.btn.disabled = true; }
     function hideLoading() { els.loading.classList.add('hidden'); els.btn.disabled = false; }
@@ -151,12 +150,13 @@
       console.error('🔴 Dashboard Error:', msg);
     }
 
-    async function fetchData(city, view, isFallback = false) {
+    async function fetchData(city, view) {
       const mun = MUNICIPIOS[city];
       if (!mun) return showError('Municipio no configurado');
 
-      const method = view === 'horario' ? '4' : '3';
-      const target = `${SMN_BASE}?method=${method}`;
+      // ✅ Usamos method=1 porque devuelve la serie temporal completa (actual + pronóstico)
+      // method=3 está caído/inestable en el servidor del SMN
+      const target = `${SMN_BASE}?method=1`;
       const proxy = `${PROXY_URL}?url=${encodeURIComponent(target)}`;
       
       controller?.abort();
@@ -164,7 +164,7 @@
       
       showLoading();
       els.error.classList.add('hidden');
-      console.log(`📡 Fetch: ${proxy} (method=${method})`);
+      console.log(`📡 Fetch: ${proxy}`);
 
       try {
         const res = await fetch(proxy, { signal: controller.signal });
@@ -173,42 +173,53 @@
         const raw = await res.json();
         const records = Array.isArray(raw) ? raw : (raw.municipios || [raw]);
         
+        // Filtrar registros del municipio seleccionado
         let matched = records.filter(r => {
           const id = String(r.idmun);
           return mun.ids.includes(id) || r.nmun?.toLowerCase().includes(mun.nombre.toLowerCase());
         });
 
-        if (matched.length === 0) throw new Error(`No se encontraron datos para ${mun.nombre}`);
+        if (matched.length === 0) throw new Error(`No se encontraron datos reales para ${mun.nombre}`);
 
-        matched.sort((a,b) => (a.dloc||'').localeCompare(b.dloc||''));
-        const limit = view === 'horario' ? 48 : 7;
-        const data = matched.slice(0, limit);
+        // ✅ Ordenar cronológicamente (formato SMN: YYYYMMDDHHmm)
+        matched.sort((a, b) => (a.dloc || '').localeCompare(b.dloc || ''));
 
-        renderCards(data[0]);
-        renderForecast(data);
-        renderChart(data, view);
-        renderDetails(data, view);
+        // ✅ Extraer datos reales para cada sección
+        const currentData = matched[0]; // Primer registro = datos actuales
+        const dailyData = matched.slice(1, 8);   // Siguientes 7 registros = pronóstico diario
+        const hourlyData = matched.slice(1, 49); // Siguientes 48 registros = pronóstico horario
+
+        // Renderizar cards principales con datos actuales reales
+        renderCards(currentData);
+
+        // Renderizar pestañas según la vista seleccionada (100% datos reales)
+        if (view === 'diario') {
+          renderForecast(dailyData);
+          renderChart(dailyData, 'diario');
+          renderDetails(dailyData, 'diario');
+        } else {
+          renderForecast(hourlyData);
+          renderChart(hourlyData, 'horario');
+          renderDetails(hourlyData, 'horario');
+        }
         
         els.dashboard.classList.remove('hidden');
-        localStorage.setItem(`smn_${city}_${view}`, JSON.stringify({ data, ts: Date.now() }));
+        localStorage.setItem(`smn_${city}`, JSON.stringify({  currentData, dailyData, hourlyData, ts: Date.now() }));
+        console.log('✅ Datos reales cargados exitosamente');
         
       } catch (err) {
         if (err.name === 'AbortError') return;
-        console.warn('️ Fetch failed:', err.message);
+        console.warn('⚠️ Fetch failed:', err.message);
         
-        // Fallback automático si method=3 falla
-        if (!isFallback && method === '3') {
-          console.log('🔄 Reintentando con method=1...');
-          return fetchData(city, view, true);
-        }
-        
-        // Último recurso: caché
-        const cached = localStorage.getItem(`smn_${city}_${view}`);
+        // Fallback a caché local si existe (< 15 min)
+        const cached = localStorage.getItem(`smn_${city}`);
         if (cached && Date.now() - JSON.parse(cached).ts < 900000) {
-          const { data } = JSON.parse(cached);
-          renderCards(data[0]); renderForecast(data); renderChart(data, view); renderDetails(data, view);
+          const {  currentData, dailyData, hourlyData } = JSON.parse(cached);
+          renderCards(currentData);
+          if (view === 'diario') { renderForecast(dailyData); renderChart(dailyData, 'diario'); renderDetails(dailyData, 'diario'); }
+          else { renderForecast(hourlyData); renderChart(hourlyData, 'horario'); renderDetails(hourlyData, 'horario'); }
           els.dashboard.classList.remove('hidden');
-          els.error.textContent = `️ Datos en caché (servicio temporalmente no disponible)`;
+          els.error.textContent = `⚠️ Mostrando datos en caché (servicio SMN no disponible)`;
           els.error.classList.remove('hidden');
           return;
         }
@@ -235,7 +246,7 @@
         const el = document.createElement('div');
         el.className = `forecast-item ${i===0?'today':''}`;
         const icon = (d.desciel||'').toLowerCase().includes('lluvia') ? '🌧️' : (d.desciel||'').toLowerCase().includes('nublado') ? '☁️' : '☀️';
-        el.innerHTML = `<div class="day">${dias[i]||'Día'}</div><div class="icon">${icon}</div><div class="temps">${d.tmax??'--'}°/${d.tmin??'--'}°</div><div class="rain">${d.probprec??'--'}%</div>`;
+        el.innerHTML = `<div class="day">${dias[i]||'Período'}</div><div class="icon">${icon}</div><div class="temps">${d.tmax??'--'}°/${d.tmin??'--'}°</div><div class="rain">${d.probprec??'--'}%</div>`;
         els.forecast.appendChild(el);
       });
     }
@@ -245,18 +256,22 @@
       if (!ctx) return;
       if (chartInstance) chartInstance.destroy();
       
-      const labels = data.map((d,i) => view==='horario' && d.dloc ? d.dloc.slice(8,10)+':00' : ['Hoy','Mañana','Mié','Jue','Vie','Sáb','Dom'][i]||`Día${i+1}`);
+      // Generar etiquetas reales basadas en dloc
+      const labels = data.map(d => {
+        if (!d.dloc) return '--';
+        const year = d.dloc.slice(0,4), month = d.dloc.slice(4,6), day = d.dloc.slice(6,8), hour = d.dloc.slice(8,10);
+        return view === 'horario' ? `${day}/${month} ${hour}:00` : `${day}/${month}`;
+      });
       
-      // ✅ Aislado en try/catch para que errores de CSP/Chart no rompan el dashboard
       try {
         chartInstance = new Chart(ctx, {
           type: 'line',
-          data: {
+           {
             labels,
             datasets: [
-              { label: 'Máx (°C)', data: data.map(d=>d.tmax), borderColor: '#ef4444', tension: 0.3, fill: false },
-              { label: 'Mín (°C)', data: data.map(d=>d.tmin), borderColor: '#38bdf8', tension: 0.3, fill: false },
-              { label: 'Lluvia (%)', data: data.map(d=>d.probprec), borderColor: '#22c55e', tension: 0.3, yAxisID: 'y1', borderDash: [5,5] }
+              { label: 'Máx (°C)',  data.map(d=>d.tmax), borderColor: '#ef4444', tension: 0.3, fill: false },
+              { label: 'Mín (°C)',  data.map(d=>d.tmin), borderColor: '#38bdf8', tension: 0.3, fill: false },
+              { label: 'Lluvia (%)',  data.map(d=>d.probprec), borderColor: '#22c55e', tension: 0.3, yAxisID: 'y1', borderDash: [5,5] }
             ]
           },
           options: {
@@ -270,21 +285,24 @@
             plugins: { legend: { labels: { color: '#e2e8f0' } } }
           }
         });
-      } catch (e) {
-        console.warn('⚠️ Chart.js no pudo renderizar (posible bloqueo CSP/extensiones). Datos visibles en tabla/pronóstico.', e);
-      }
+      } catch (e) { console.warn('⚠️ Chart.js error:', e); }
     }
 
     function renderDetails(data, view) {
       els.detailsBody.innerHTML = '';
       data.forEach((d,i) => {
-        const period = view==='horario' && d.dloc ? d.dloc.slice(8,10)+':00' : `Día ${i+1}`;
+        let period = 'N/A';
+        if (d.dloc) {
+          const day = d.dloc.slice(6,8), month = d.dloc.slice(4,6), hour = d.dloc.slice(8,10);
+          period = view === 'horario' ? `${day}/${month} ${hour}:00` : `Día ${i+1} (${day}/${month})`;
+        }
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${period}</td><td>${d.tmax??'-'}°</td><td>${d.tmin??'-'}°</td><td>${d.probprec??'-'}%</td><td>${d.velvien??'-'}km/h</td><td>${d.dirvienc||'-'}</td><td>${(d.desciel||'-').slice(0,10)}</td>`;
+        row.innerHTML = `<td>${period}</td><td>${d.tmax??'-'}°</td><td>${d.tmin??'-'}°</td><td>${d.probprec??'-'}%</td><td>${d.velvien??'-'}km/h</td><td>${d.dirvienc||'-'}</td><td>${(d.desciel||'-').slice(0,12)}</td>`;
         els.detailsBody.appendChild(row);
       });
     }
 
+    // Manejo de tabs
     els.tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         els.tabs.forEach(t => t.classList.remove('active'));
@@ -294,13 +312,14 @@
       });
     });
 
+    // Eventos
     els.btn.addEventListener('click', () => fetchData(els.municipio.value, els.vista.value));
     els.municipio.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     els.vista.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     
     // Carga inicial
     window.addEventListener('DOMContentLoaded', () => {
-      els.btn.disabled = false; // Refuerzo por si acaso
+      els.btn.disabled = false;
       fetchData(els.municipio.value, els.vista.value);
     });
   </script>
