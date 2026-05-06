@@ -52,7 +52,7 @@
 <body>
   <div class="container">
     <header>
-      <div><h1>🌤️ Dashboard Meteorológico · Veracruz</h1><p>Servicio Meteorológico Nacional / CONAGUA</p></div>
+      <div><h1>️ Dashboard Meteorológico · Veracruz</h1><p>Servicio Meteorológico Nacional / CONAGUA</p></div>
       <span class="badge">SMN · CONAGUA</span>
     </header>
     <div class="controls">
@@ -98,7 +98,6 @@
   </div>
 
   <script>
-    // ⚠️ ACTUALIZA ESTA URL CON TU PROXY DE VERCEL
     const PROXY_URL = 'https://smn-proxy.vercel.app/api/proxy';
     const SMN_BASE = 'https://smn.conagua.gob.mx/tools/GUI/webservices/index.php';
 
@@ -138,11 +137,9 @@
     let chartInstance = null;
     let controller = null;
 
-    // Forzar habilitación del botón después de 3s (fallback)
-    setTimeout(() => { els.btn.disabled = false; console.log('⏱️ Fallback: botón habilitado'); }, 3000);
-
-    function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); }
-    function hideLoading() { els.loading.classList.add('hidden'); els.btn.disabled = false; }
+    function unlockBtn() { els.btn.disabled = false; }
+    function showLoading() { els.loading.classList.remove('hidden'); els.dashboard.classList.add('hidden'); els.btn.disabled = true; }
+    function hideLoading() { els.loading.classList.add('hidden'); unlockBtn(); }
     function showError(msg) {
       els.error.textContent = msg;
       els.error.classList.remove('hidden');
@@ -151,8 +148,8 @@
       console.error('🔴 Error:', msg);
     }
 
-    async function fetchData(city, view) {
-      console.log(`🚀 fetchData start: ${city} / ${view}`);
+    async function fetchData(city, view, isFallback = false) {
+      console.log(`🚀 Start: ${city} | ${view} | fallback:${isFallback}`);
       const mun = MUNICIPIOS[city];
       if (!mun) return showError('Municipio no configurado');
 
@@ -165,50 +162,58 @@
       
       showLoading();
       els.error.classList.add('hidden');
-      console.log(`📡 Fetch: ${proxy}`);
 
       try {
         const res = await fetch(proxy, { signal: controller.signal });
-        console.log(`📥 Response status: ${res.status}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
         const raw = await res.json();
-        console.log(`📦 Raw type: ${Array.isArray(raw) ? 'array' : typeof raw}, length: ${Array.isArray(raw) ? raw.length : 'N/A'}`);
-        
         const records = Array.isArray(raw) ? raw : (raw.municipios || [raw]);
         
-        // Filtro robusto
         let matched = records.filter(r => {
           const id = String(r.idmun);
           return mun.ids.includes(id) || r.nmun?.toLowerCase().includes(mun.nombre.toLowerCase());
         });
-        
-        console.log(`🔍 Matched: ${matched.length} registros`);
-        if (matched.length === 0) {
-          console.log('📋 IDs disponibles:', records.slice(0,3).map(r => ({id:r.idmun, name:r.nmun})));
-          throw new Error(`No se encontraron datos para ${mun.nombre}`);
-        }
+
+        if (matched.length === 0) throw new Error(`No se encontraron datos para ${mun.nombre}`);
 
         matched.sort((a,b) => (a.dloc||'').localeCompare(b.dloc||''));
         const limit = view === 'horario' ? 48 : 7;
         const data = matched.slice(0, limit);
-        console.log(`✅ Data ready: ${data.length} registros`);
 
-        // Renderizar
         renderCards(data[0]);
         renderForecast(data);
         renderChart(data, view);
         renderDetails(data, view);
         
         els.dashboard.classList.remove('hidden');
-        console.log('✨ Dashboard visible');
+        localStorage.setItem(`smn_${city}_${view}`, JSON.stringify({ data, ts: Date.now() }));
+        console.log('✅ Success');
         
       } catch (err) {
-        console.error('❌ Catch error:', err.message);
-        if (err.name !== 'AbortError') showError(`Error: ${err.message}`);
+        if (err.name === 'AbortError') return;
+        console.warn('️ Fetch failed:', err.message);
+        
+        // Si falla method=3 y no es fallback, intentar con method=1 (datos actuales)
+        if (!isFallback && method === '3') {
+          console.log('🔄 Fallback a method=1...');
+          return fetchData(city, view, true);
+        }
+        
+        // Último recurso: caché
+        const cached = localStorage.getItem(`smn_${city}_${view}`);
+        if (cached && Date.now() - JSON.parse(cached).ts < 900000) {
+          const { data } = JSON.parse(cached);
+          renderCards(data[0]); renderForecast(data); renderChart(data, view); renderDetails(data, view);
+          els.dashboard.classList.remove('hidden');
+          els.error.textContent = `⚠️ Mostrando datos en caché (servicio no disponible)`;
+          els.error.classList.remove('hidden');
+          return;
+        }
+        
+        showError(`Error: ${err.message}${isFallback ? ' (Sin datos disponibles)' : ''}`);
       } finally {
         hideLoading();
-        console.log('🏁 fetchData end');
       }
     }
 
@@ -228,8 +233,7 @@
       data.slice(0,7).forEach((d,i) => {
         const el = document.createElement('div');
         el.className = `forecast-item ${i===0?'today':''}`;
-        const icon = (d.desciel||'').toLowerCase().includes('lluvia') ? '🌧️' : 
-                     (d.desciel||'').toLowerCase().includes('nublado') ? '☁️' : '☀️';
+        const icon = (d.desciel||'').toLowerCase().includes('lluvia') ? '️' : (d.desciel||'').toLowerCase().includes('nublado') ? '☁️' : '☀️';
         el.innerHTML = `<div class="day">${dias[i]||'Día'}</div><div class="icon">${icon}</div><div class="temps">${d.tmax??'--'}°/${d.tmin??'--'}°</div><div class="rain">${d.probprec??'--'}%</div>`;
         els.forecast.appendChild(el);
       });
@@ -263,10 +267,7 @@
             plugins: { legend: { labels: { color: '#e2e8f0' } } }
           }
         });
-        console.log('📊 Chart created');
-      } catch (e) {
-        console.warn('⚠️ Chart error:', e.message);
-      }
+      } catch (e) { console.warn('Chart error:', e); }
     }
 
     function renderDetails(data, view) {
@@ -279,7 +280,6 @@
       });
     }
 
-    // Tabs
     els.tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         els.tabs.forEach(t => t.classList.remove('active'));
@@ -289,15 +289,12 @@
       });
     });
 
-    // Events
     els.btn.addEventListener('click', () => fetchData(els.municipio.value, els.vista.value));
     els.municipio.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     els.vista.addEventListener('change', () => fetchData(els.municipio.value, els.vista.value));
     
-    // Init
     window.addEventListener('DOMContentLoaded', () => {
-      console.log('📄 DOMContentLoaded');
-      els.btn.disabled = false;
+      unlockBtn();
       fetchData(els.municipio.value, els.vista.value);
     });
   </script>
